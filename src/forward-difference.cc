@@ -20,46 +20,64 @@ int main(int argc, char ** argv) {
   int N = 30;
   int nloc = N/nproc;
   double h = 1.0/(N-1);
+  double sigma = -0.25;
 
-  vector<vector<double>> u;
-  u.resize(nloc+1,vector<double>(nloc+1));
+  vector<vector<double>> u_prev;
+  u_prev.resize(nloc+1,vector<double>(nloc+1));
+  vector<vector<double>> u_next;
+  u_next.resize(nloc+1,vector<double>(nloc+1));
 
   string name = "data/sol";
-  ofstream outfstr[nproc];
+  ofstream outfstr[nproc][100];
 
   //compute the value
   for(int i=0;i<nproc;i++)
     for(int j=0;j<nloc+1;j++)
-      u[j][i] = sin(2*M_PI*(j+(i*nloc))*h);
+      u_prev[j][i] = sin(2*M_PI*(j+(i*nloc))*h);
 
-  //send the ghost values
-  if(commrank == 0) {
-    temp = u[0][commrank];
-    MPI_Isend(&temp, 1, MPI_DOUBLE, commrank+1, 0, MPI_COMM_WORLD,&sendrequest);
-    MPI_Wait(&sendrequest,&status);
-  }
+  for(int it=0; it < 100;it++)  {
+    // Open files for writing
+    for(int i=0;i<nproc;i++)
+      outfstr[i][it].open(name + to_string(i) + "-" + to_string(it)+ ".dat");
+    if(commrank == 0) {
+        temp = u_prev[1][commrank];
+        MPI_Isend(&temp, 1, MPI_DOUBLE, nproc-1, 0, MPI_COMM_WORLD,&sendrequest);
+        MPI_Wait(&sendrequest,&status);
+        MPI_Irecv(&temp, 1, MPI_DOUBLE, commrank+1 , 0,MPI_COMM_WORLD, &recvrequest);
+        MPI_Wait(&recvrequest, &status);
+        u_prev[nloc][commrank] = temp;
+        for(int i=0; i<nloc;i++) {
+            u_next[i][commrank] = (1+sigma)*u_prev[i][commrank] - sigma*u_prev[i+1][commrank];
+            outfstr[commrank][it] << (i + (commrank*nloc))*h << " " << u_next[i][commrank] << endl;
+        }
+    }
 
-  else if(commrank == nproc-1) {
-    temp = u[nloc][commrank];
-    MPI_Irecv(&temp, 1, MPI_DOUBLE, commrank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &recvrequest);
-    MPI_Wait(&recvrequest,&status);
-    u[nloc][commrank] = temp;
-  }
+    else if(commrank == nproc-1) {
+        temp = u_prev[0][commrank];
+        MPI_Isend(&temp, 1, MPI_DOUBLE, commrank-1, 0, MPI_COMM_WORLD,&sendrequest);
+        MPI_Wait(&sendrequest,&status);
+        MPI_Irecv(&temp, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &recvrequest);
+        MPI_Wait(&recvrequest,&status);
+        u_prev[nloc][commrank] = temp;
+        for(int i=0; i<nloc;i++) {
+            u_next[i][commrank] = (1+sigma)*u_prev[i][commrank] - sigma*u_prev[i+1][commrank];
+            outfstr[commrank][it] << (i + (commrank*nloc))*h << " " << u_next[i][commrank] << endl;
+        }
+    }
 
-  else {
-    temp = u[0][commrank];
-    MPI_Isend(&temp, 1, MPI_DOUBLE, commrank+1, 0, MPI_COMM_WORLD,&sendrequest);
-    MPI_Wait(&sendrequest,&status);
-    MPI_Irecv(&temp, 1, MPI_DOUBLE, commrank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &recvrequest);
-    MPI_Wait(&recvrequest,&status);
-    u[nloc][commrank] = temp;
-  }
-
-  // Write the files
-  for(int i=0;i<nproc;i++) {
-    outfstr[i].open(name + to_string(i) + ".dat");
-    for(int j=0;j<nloc+1;j++)
-      outfstr[i] << (j+(i*nloc))*h << " " << u[j][i] << endl;
+    else {
+        temp = u_prev[0][commrank];
+        MPI_Isend(&temp, 1, MPI_DOUBLE, commrank-1, 0, MPI_COMM_WORLD,&sendrequest);
+        MPI_Wait(&sendrequest,&status);
+        MPI_Irecv(&temp, 1, MPI_DOUBLE, commrank+1, 0, MPI_COMM_WORLD, &recvrequest);
+        MPI_Wait(&recvrequest,&status);
+        u_prev[nloc][commrank] = temp;
+        for(int i=0; i<nloc;i++) {
+            u_next[i][commrank] = (1+sigma)*u_prev[i][commrank] - sigma*u_prev[i+1][commrank];
+            outfstr[commrank][it] << (i + (commrank*nloc))*h << " " << u_next[i][commrank] << endl;
+        }
+    }
+    u_prev = u_next;
   }
 
   MPI_Finalize();
